@@ -1,0 +1,13 @@
+[project]
+name = "news-digest-assistant"
+version = "0.1.0"
+description = "Daily news aggregator and translator with a premium web dashboard."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn>=0.28.0",
+    "requests>=2.31.0",
+    "googlenewsdecoder>=0.1.5",
+    "deep-translator>=1.11.4",
+]

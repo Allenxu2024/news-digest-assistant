@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+digest.db
+*.log
+briefings/*.md
+.pytest_cache/
+*.pyc
