@@ -5,6 +5,7 @@ import datetime
 import asyncio
 import signal
 import threading
+import subprocess
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -17,6 +18,32 @@ BRIEFINGS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "briefi
 
 # Ensure briefings directory exists
 os.makedirs(BRIEFINGS_DIR, exist_ok=True)
+
+IS_FETCHING = False
+IS_FETCHING_LOCK = threading.Lock()
+
+def run_fetcher_subprocess():
+    global IS_FETCHING
+    with IS_FETCHING_LOCK:
+        if IS_FETCHING:
+            return
+        IS_FETCHING = True
+        
+    try:
+        venv_python = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".venv", "bin", "python3")
+        if not os.path.exists(venv_python):
+            venv_python = sys.executable
+        script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fetcher.py")
+        log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fetcher.log")
+        with open(log_path, "a", encoding="utf-8") as log_file:
+            log_file.write(f"\n[{datetime.datetime.now()}] === Auto Background Fetch Start ===\n")
+            subprocess.run([venv_python, script_path], stdout=log_file, stderr=log_file, check=True)
+            log_file.write(f"[{datetime.datetime.now()}] === Auto Background Fetch End ===\n")
+    except Exception as e:
+        print(f"Error running auto background fetch: {e}")
+    finally:
+        with IS_FETCHING_LOCK:
+            IS_FETCHING = False
 
 app = FastAPI(title="News Digest Assistant API")
 
@@ -103,8 +130,22 @@ def get_dashboard():
         return JSONResponse(status_code=404, content={"message": "Dashboard HTML template not found. Please create templates/index.html."})
 
 @app.get("/api/news")
-def get_news(topic: str = None, fetch_date: str = None):
-    """Retrieve raw news items where is_read = 0 (unread)."""
+def get_news(background_tasks: BackgroundTasks, topic: str = None, fetch_date: str = None):
+    """Retrieve raw news items where is_read = 0 (unread). Triggers fetch if no news today."""
+    global IS_FETCHING
+    
+    # Check if a fetch has run today
+    if not fetch_date:
+        today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM raw_news WHERE fetch_date = ?", (today_str,))
+        count = cursor.fetchone()[0]
+        conn.close()
+        
+        if count == 0 and not IS_FETCHING:
+            background_tasks.add_task(run_fetcher_subprocess)
+            
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -118,10 +159,6 @@ def get_news(topic: str = None, fetch_date: str = None):
     if fetch_date:
         query += " AND fetch_date = ?"
         params.append(fetch_date)
-    else:
-        # Default to today or the latest available unread date
-        # Let's just return all unread items
-        pass
         
     query += " ORDER BY fetch_date DESC, id DESC"
     
@@ -129,7 +166,7 @@ def get_news(topic: str = None, fetch_date: str = None):
     rows = cursor.fetchall()
     
     # Check if there are no unread items, maybe fetch some read items from today to show something
-    if not rows:
+    if not rows and not fetch_date:
         today_str = datetime.datetime.now().strftime("%Y-%m-%d")
         query_today = "SELECT * FROM raw_news WHERE fetch_date = ? ORDER BY id DESC"
         cursor.execute(query_today, [today_str])
@@ -138,7 +175,10 @@ def get_news(topic: str = None, fetch_date: str = None):
     conn.close()
     
     result = [dict(row) for row in rows]
-    return result
+    return {
+        "is_fetching": IS_FETCHING,
+        "items": result
+    }
 
 @app.post("/api/save")
 def save_news(req: SaveNewsRequest):

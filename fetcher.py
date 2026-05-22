@@ -10,6 +10,7 @@ import time
 import requests
 from googlenewsdecoder import gnewsdecoder
 from deep_translator import GoogleTranslator
+from bs4 import BeautifulSoup
 
 # Database path
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "digest.db")
@@ -98,11 +99,15 @@ def init_db():
     conn.close()
 
 def clean_html(raw_html):
-    """Remove HTML tags from raw string."""
+    """Remove HTML tags from raw string and normalize whitespace."""
+    if not raw_html:
+        return ""
     clean_r = re.compile('<.*?>')
     text = re.sub(clean_r, '', raw_html)
     # Decode common HTML entities
     text = text.replace('&nbsp;', ' ').replace('&quot;', '"').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+    # Normalize whitespace
+    text = re.sub(r'\s+', ' ', text)
     return text.strip()
 
 def fetch_meta_description(url):
@@ -111,30 +116,46 @@ def fetch_meta_description(url):
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
     try:
-        res = requests.get(url, headers=headers, timeout=5)
+        res = requests.get(url, headers=headers, timeout=8)
         # Attempt to auto-detect encoding
         if res.encoding is None or res.encoding == 'ISO-8859-1':
             res.encoding = res.apparent_encoding
             
         html = res.text
+        soup = BeautifulSoup(html, 'html.parser')
         
         # Look for meta description
-        meta_desc = re.search(r'<meta[^>]*name=["\']description["\'][^>]*content=["\']([^"\']*)["\']', html, re.IGNORECASE)
+        desc = ""
+        meta_desc = soup.find('meta', attrs={'name': re.compile(r'^description$', re.IGNORECASE)})
         if not meta_desc:
-            meta_desc = re.search(r'<meta[^>]*content=["\']([^"\']*)["\'][^>]*name=["\']description["\']', html, re.IGNORECASE)
+            meta_desc = soup.find('meta', attrs={'property': re.compile(r'^og:description$', re.IGNORECASE)})
+        if meta_desc and meta_desc.get('content'):
+            desc = clean_html(meta_desc.get('content'))
             
-        if meta_desc:
-            desc = clean_html(meta_desc.group(1))
-            if desc:
-                return desc
-                
-        # Fallback: grab first 200 characters of paragraphs
-        paragraphs = re.findall(r'<p>(.*?)</p>', html)
-        if paragraphs:
-            text = " ".join([clean_html(p) for p in paragraphs[:3]])
-            text = re.sub(r'\s+', ' ', text)
-            if len(text) > 10:
-                return text[:250] + "..."
+        # Fallback: grab paragraphs to form a richer description
+        paragraphs = []
+        for p in soup.find_all('p'):
+            p_text = p.get_text()
+            if p_text:
+                cleaned_p = clean_html(p_text)
+                # Filter out very short paragraphs (usually sharing/credits/navigation elements)
+                if len(cleaned_p) > 40:
+                    paragraphs.append(cleaned_p)
+        
+        para_text = " ".join(paragraphs[:5])
+        para_text = re.sub(r'\s+', ' ', para_text)
+        
+        # Intelligently combine meta description and paragraph contents
+        if desc:
+            combined = desc
+            # If paragraph text exists and isn't just starting with the meta description, append it
+            if para_text and not para_text.startswith(desc[:30]):
+                combined += " " + para_text
+        else:
+            combined = para_text
+            
+        if len(combined) > 10:
+            return combined[:800] + ("..." if len(combined) > 800 else "")
     except Exception as e:
         print(f"  [Warning] Failed to fetch summary for {url}: {e}")
         
