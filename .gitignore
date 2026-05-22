@@ -5,3 +5,4 @@ digest.db
 briefings/*.md
 .pytest_cache/
 *.pyc
+*.zip

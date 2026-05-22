@@ -113,10 +113,15 @@ def clean_html(raw_html):
 def fetch_meta_description(url):
     """Fetch the target webpage and extract the meta description or a fallback summary."""
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'Referer': 'https://news.google.com/'
     }
     try:
-        res = requests.get(url, headers=headers, timeout=8)
+        res = requests.get(url, headers=headers, timeout=12)
         # Attempt to auto-detect encoding
         if res.encoding is None or res.encoding == 'ISO-8859-1':
             res.encoding = res.apparent_encoding
@@ -138,11 +143,12 @@ def fetch_meta_description(url):
             p_text = p.get_text()
             if p_text:
                 cleaned_p = clean_html(p_text)
-                # Filter out very short paragraphs (usually sharing/credits/navigation elements)
-                if len(cleaned_p) > 40:
+                # Filter out short paragraphs (credits/navigation/etc.)
+                if len(cleaned_p) > 50:
                     paragraphs.append(cleaned_p)
         
-        para_text = " ".join(paragraphs[:5])
+        # Grab up to 8 paragraphs to construct a detailed description
+        para_text = " ".join(paragraphs[:8])
         para_text = re.sub(r'\s+', ' ', para_text)
         
         # Intelligently combine meta description and paragraph contents
@@ -155,7 +161,7 @@ def fetch_meta_description(url):
             combined = para_text
             
         if len(combined) > 10:
-            return combined[:800] + ("..." if len(combined) > 800 else "")
+            return combined[:1500] + ("..." if len(combined) > 1500 else "")
     except Exception as e:
         print(f"  [Warning] Failed to fetch summary for {url}: {e}")
         

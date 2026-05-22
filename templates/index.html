@@ -805,7 +805,12 @@
                 // Add a date header section
                 const dateHeader = document.createElement('div');
                 dateHeader.className = 'date-group-header';
-                dateHeader.innerHTML = `📅 ${date}`;
+                dateHeader.innerHTML = `
+                    <span>📅 ${date}</span>
+                    <button class="toggle-lang-btn" onclick="markDateAsRead('${date}')" style="margin-left:auto; font-size:0.75rem; border-color: rgba(0, 229, 255, 0.3); color: var(--accent-primary);">
+                        此日标记已读
+                    </button>
+                `;
                 container.appendChild(dateHeader);
                 
                 groups[date].forEach(item => {
@@ -855,11 +860,16 @@
                                 <a href="${item.original_url}" target="_blank" class="card-title" id="title-text-${item.id}">
                                     ${item.title_zh || item.title_orig}
                                 </a>
-                                ${isTranslated ? `
-                                    <button class="toggle-lang-btn" onclick="toggleTranslation(${item.id})">
-                                        对照原文
+                                <div style="display:flex; gap:0.5rem; align-items:center;">
+                                    ${isTranslated ? `
+                                        <button class="toggle-lang-btn" onclick="toggleTranslation(${item.id})">
+                                            对照原文
+                                        </button>
+                                    ` : ''}
+                                    <button class="toggle-lang-btn" onclick="ignoreArticle(${item.id})" style="border-color: rgba(244, 63, 94, 0.3); color: var(--danger-color);">
+                                        忽略
                                     </button>
-                                ` : ''}
+                                </div>
                             </div>
                             
                             <div class="card-summary" id="summary-text-${item.id}">
@@ -996,6 +1006,58 @@
             }
         }
 
+        // Mark individual article as read
+        async function ignoreArticle(id) {
+            try {
+                const response = await fetch('/api/mark_read', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ ids: [id] })
+                });
+
+                if (response.ok) {
+                    showToast("已忽略该新闻条目。");
+                    allNews = allNews.filter(n => n.id !== id);
+                    updateBadges();
+                    renderNews();
+                }
+            } catch (error) {
+                console.error("Error marking article as read:", error);
+            }
+        }
+
+        // Mark all articles of a specific date as read
+        async function markDateAsRead(date) {
+            const dateNews = allNews.filter(n => (n.fetch_date === date) && (currentTab === 'all' || n.topic === currentTab));
+            if (dateNews.length === 0) return;
+            
+            const ids = dateNews.map(n => n.id);
+            if (!confirm(`确定将 ${date} 的这 ${ids.length} 条新闻标记为已读吗？`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/mark_read', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ ids: ids })
+                });
+
+                if (response.ok) {
+                    showToast(`已将 ${date} 的新闻标记为已读。`);
+                    allNews = allNews.filter(n => !ids.includes(n.id));
+                    updateBadges();
+                    renderNews();
+                }
+            } catch (error) {
+                console.error("Error marking date news as read:", error);
+            }
+        }
+
         // Programmatic shutdown
         async function shutdownServer() {
             if (allNews.some(n => n.checked)) {
@@ -1007,9 +1069,6 @@
             try {
                 // Show overlay first
                 document.getElementById('shutdown-overlay').classList.add('visible');
-                
-                // Mark all currently unread articles as read
-                await fetch('/api/mark_all_read', { method: 'POST' });
                 
                 // Call shutdown endpoint
                 fetch('/api/shutdown', { method: 'POST' });
